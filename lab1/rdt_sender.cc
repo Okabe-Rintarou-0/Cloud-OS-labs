@@ -27,8 +27,13 @@
 #include "rdt_sender.h"
 
 //#define DEBUG
+#define AIMD
+
 #define DUP_UPPERBOUND 3
 #define TIMEOUT 0.3
+#ifdef AIMD
+#define WINDOW_SIZE_UPPERBOUND 32
+#endif
 
 struct TimerChainBlock {
     TimerChainBlock(unsigned int seq, double expire_time) : seq(seq), expire_time(expire_time) {}
@@ -37,14 +42,18 @@ struct TimerChainBlock {
     double expire_time;
 };
 
-std::queue <TimerChainBlock> timer_chain;
+std::list <TimerChainBlock> timer_chain;
 
 std::list <packet> window;
 std::queue <packet> buffer;
 std::unordered_map<int, int> dup_ack;
 unsigned int seq = 0;
 unsigned int current_ack = 1;
+#ifdef AIMD
+unsigned int window_size = 2;
+#else
 unsigned int window_size = 8;
+#endif
 
 /* sender initialization, called once at the very beginning */
 void Sender_Init() {
@@ -87,16 +96,16 @@ inline void SendToLower(packet *pkt) {
         Sender_StartTimer(TIMEOUT);
     }
 
-    timer_chain.push(TimerChainBlock(*(unsigned int *) &pkt->data[1], GetSimulationTime() + TIMEOUT));
+    timer_chain.emplace_back(*(unsigned int *) &pkt->data[1], GetSimulationTime() + TIMEOUT);
 
     Sender_ToLowerLayer(pkt);
 }
 
 inline void SendOrBuffer(packet *pkt) {
-    unsigned int seq = *(unsigned int *) &pkt->data[1];
     if (window.size() < window_size) {
         window.push_back(*pkt);
 #ifdef DEBUG
+        unsigned int seq = *(unsigned int *) &pkt->data[1];
         printf("Sender send pkt now(seq = %d)\n", seq);
 #endif
         SendToLower(pkt);
@@ -166,6 +175,11 @@ void Retransmit(unsigned int seq) {
         SendToLower(&(*pkt_iter));
 }
 
+/**
+ * @brief This function is to check whether the packet received has been corrupted, based on checksum.
+ * @param pkt packet received from the receiver
+ * @return if the packet is not corrupted, return true, else return false.
+ */
 inline bool PacketNotCorrupted(packet *pkt) {
     constexpr static int header_size = 11;
     unsigned int size = pkt->data[0];
@@ -200,9 +214,29 @@ void Sender_FromLowerLayer(struct packet *pkt) {
     if (++dup_ack[ack] >= DUP_UPPERBOUND) {
         dup_ack[ack] = 0;
         Retransmit(ack);
+        auto iter = std::find_if(timer_chain.begin(), timer_chain.end(), [ack](const TimerChainBlock &another) {
+            return ack == another.seq;
+        });
+        if (iter != timer_chain.end()) {
+            if (timer_chain.size() == 1) {
+                timer_chain.clear();
+                Sender_StopTimer();
+            } else {
+                timer_chain.erase(iter);
+            }
+        }
+#ifdef AIMD
+        window_size >>= 1;
+#endif
     }
-
-    /* Move the window */
+#ifdef AIMD
+    if (window_size < WINDOW_SIZE_UPPERBOUND) {
+        window_size <<= 1;
+    } else {
+        ++window_size;
+    }
+#endif
+    /* Move the sliding window, all the packet smaller than ack can be erased safely. */
     if (ack > current_ack) {
         while (!window.empty()) {
             packet &front = window.front();
@@ -214,6 +248,7 @@ void Sender_FromLowerLayer(struct packet *pkt) {
         current_ack = ack;
     }
 
+    /* When the sliding window has been moved, the packet buffered may be sent now */
     while (window.size() < window_size && !buffer.empty()) {
         packet &front = buffer.front();
         SendToLower(&front);
@@ -224,6 +259,10 @@ void Sender_FromLowerLayer(struct packet *pkt) {
 
 /* event handler, called when the timer expires */
 void Sender_Timeout() {
+#ifdef AIMD
+    window_size = 2;
+#endif
+
     ASSERT(!timer_chain.empty());
     TimerChainBlock &front = timer_chain.front();
 #ifdef DEBUG
@@ -232,7 +271,9 @@ void Sender_Timeout() {
     if (front.seq >= current_ack) {
         Retransmit(front.seq);
     }
-    timer_chain.pop();
+    timer_chain.pop_front();
+    /* This is a chain of timer, which is used to simulate multiple timer */
+    /* The blocks are ordered by their expire time. */
     if (!timer_chain.empty()) {
         double next_expire_time = timer_chain.front().expire_time;
         double internal = next_expire_time - GetSimulationTime();

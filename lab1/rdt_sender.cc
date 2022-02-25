@@ -196,6 +196,22 @@ inline bool PacketNotCorrupted(packet *pkt) {
     return pkt_checksum == real_checksum;
 }
 
+void StopReceivedPacketTimer(unsigned int seq) {
+    auto iter = std::find_if(timer_chain.begin(), timer_chain.end(), [seq](const TimerChainBlock &another) {
+        return another.seq == seq;
+    });
+    if (iter == timer_chain.end()) return;
+    if (iter == timer_chain.begin()) {
+        Sender_StopTimer();
+        timer_chain.pop_front();
+        if (!timer_chain.empty()) {
+            Sender_StartTimer(timer_chain.front().expire_time - GetSimulationTime());
+        }
+    } else {
+        timer_chain.erase(iter);
+    }
+}
+
 /* event handler, called when a packet is passed from the lower layer at the 
    sender */
 void Sender_FromLowerLayer(struct packet *pkt) {
@@ -205,11 +221,14 @@ void Sender_FromLowerLayer(struct packet *pkt) {
 #endif
         return;
     }
-
+    unsigned int seq = *(unsigned int *) (&pkt->data[1]);
     unsigned int ack = *(unsigned int *) (&pkt->data[5]);
 #ifdef DEBUG
     printf("Received ack from receiver: %d, and dup_ack[%d] = %d\n", ack, ack, dup_ack[ack] + 1);
 #endif
+
+    StopReceivedPacketTimer(seq);
+
     /* Fast retransmit */
     if (++dup_ack[ack] >= DUP_UPPERBOUND) {
         dup_ack[ack] = 0;

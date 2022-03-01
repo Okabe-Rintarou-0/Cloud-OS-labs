@@ -1,5 +1,15 @@
 # Lab 1 - Reliable Data Transport Protocol
 
+### Personal Info
+
+| Key        | Value                 |
+| ---------- | --------------------- |
+| Name       | 林子宏                |
+| Student ID | 519021911327          |
+| Email      | 923048992@sjtu.edu.cn |
+
+
+
 ### Packet Format
 
 The packet format of my reliable data transport protocol is as follow.
@@ -55,8 +65,9 @@ Here is the function that checks whether the packet has been corrupted.
 inline bool PacketNotCorrupted(packet *pkt) {
     constexpr static int header_size = 11;
     unsigned int size = pkt->data[0];
-    unsigned int ack = *(unsigned int *) &pkt->data[5];
-    if (size < 0 || size > RDT_PKTSIZE || ack > seq + 1)
+    unsigned int pkt_seq = *(unsigned int *) &pkt->data[1];
+    unsigned int pkt_ack = *(unsigned int *) &pkt->data[5];
+    if (size < 0 || size > RDT_PKTSIZE || pkt_ack > seq + 1 || pkt_seq > seq)
         return false;
     int pkt_checksum = *(unsigned short *) &pkt->data[9];
     /* Set the checksum to zero first, then calculate the checksum */
@@ -66,7 +77,7 @@ inline bool PacketNotCorrupted(packet *pkt) {
 }
 ```
 
-Since checksum is not omnipotent(In some cases it will not be able to detect the error), so the function also checks whether the ack and data length field of the packet are validate.
+Since checksum is not omnipotent(In some cases it will not be able to detect the error), so the function also checks whether the ack, seq and data length field of the packet are validate.
 
 ### Sliding Window with Buffer
 

@@ -1,5 +1,15 @@
 # Lab 1 - Reliable Data Transport Protocol
 
+### Personal Info
+
+| Key        | Value                 |
+| ---------- | --------------------- |
+| Name       | 林子宏                |
+| Student ID | 519021911327          |
+| Email      | 923048992@sjtu.edu.cn |
+
+
+
 ### Packet Format
 
 The packet format of my reliable data transport protocol is as follow.
@@ -55,8 +65,9 @@ Here is the function that checks whether the packet has been corrupted.
 inline bool PacketNotCorrupted(packet *pkt) {
     constexpr static int header_size = 11;
     unsigned int size = pkt->data[0];
-    unsigned int ack = *(unsigned int *) &pkt->data[5];
-    if (size < 0 || size > RDT_PKTSIZE || ack > seq + 1)
+    unsigned int pkt_seq = *(unsigned int *) &pkt->data[1];
+    unsigned int pkt_ack = *(unsigned int *) &pkt->data[5];
+    if (size < 0 || size > RDT_PKTSIZE || pkt_ack > seq + 1 || pkt_seq > seq)
         return false;
     int pkt_checksum = *(unsigned short *) &pkt->data[9];
     /* Set the checksum to zero first, then calculate the checksum */
@@ -66,7 +77,7 @@ inline bool PacketNotCorrupted(packet *pkt) {
 }
 ```
 
-Since checksum is not omnipotent(In some cases it will not be able to detect the error), so the function also checks whether the ack and data length field of the packet are validate.
+Since checksum is not omnipotent(In some cases it will not be able to detect the error), so the function also checks whether the ack, seq and data length field of the packet are validate.
 
 ### Sliding Window with Buffer
 
@@ -215,4 +226,61 @@ if (!timer_chain.empty()) {
       return msg;
   }
   ```
+
+### Optimization
+
+My design mentioned above can be optimized. Many redundant packets are sent because of some logical flaws of my code. Let's see an example: suppose I have sent several packets to the receiver: 1,2,3,4, but somehow the 2nd packet has been lost. When the receiver received the 3rd packet, it will send back a packet whose acknowledge number is 3 instead of 4, for the absence of the 2nd packet. For my original logic, in this case the timer for the 3rd packet will still goes off even if the 3rd packet has been exactly received.
+
+So I come up with a method to optimize it: When the receiver has received a packet, it will send back a packet whose sequence number is the same as the sequence number of the packet that has just been received by the receiver.
+
+```c++
+*(unsigned int *) &ack_pkt.data[1] = seq;
+```
+
+Then the sender can safely remove the unnecessary timer according to it.
+
+```c++
+void StopReceivedPacketTimer(unsigned int seq) {
+    auto iter = std::find_if(timer_chain.begin(), timer_chain.end(), [seq](const TimerChainBlock &another) {
+        return another.seq == seq;
+    });
+    if (iter == timer_chain.end()) return;
+    if (iter == timer_chain.begin()) {
+        Sender_StopTimer();
+        timer_chain.pop_front();
+        if (!timer_chain.empty()) {
+            Sender_StartTimer(timer_chain.front().expire_time - GetSimulationTime());
+        }
+    } else {
+        timer_chain.erase(iter);
+    }
+}
+```
+
+After that, the performance has greatly improved.
+
+```
+./rdt_sim 1000 0.1 100 0.15 0.15 0.15 0
+## Simulation completed at time 1001.41s with
+	994527 characters sent
+	994527 characters delivered
+	35544 packets passed between the sender and the receiver
+## Congratulations! This session is error-free, loss-free, and in order.
+```
+
+```
+./rdt_sim 1000 0.1 100 0.3 0.3 0.3 0
+## Simulation completed at time 1793.47s with
+	994946 characters sent
+	994946 characters delivered
+	44532 packets passed between the sender and the receiver
+## Congratulations! This session is error-free, loss-free, and in order.
+```
+
+### Test Result
+
+| Case                                    | Average Passed Packets | Error Rate/% |
+| --------------------------------------- | ---------------------- | ------------ |
+| ./rdt_sim 1000 0.1 100 0.15 0.15 0.15 0 | 35455                  | 0            |
+| ./rdt_sim 1000 0.1 100 0.3 0.3 0.3 0    | 44377                  | 0            |
 

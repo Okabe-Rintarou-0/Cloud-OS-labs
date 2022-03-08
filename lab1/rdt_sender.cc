@@ -28,12 +28,8 @@
 
 //#define DEBUG
 #define AIMD
-
 #define DUP_UPPERBOUND 3
 #define TIMEOUT 0.3
-#ifdef AIMD
-#define WINDOW_SIZE_UPPERBOUND 32
-#endif
 
 struct TimerChainBlock {
     TimerChainBlock(unsigned int seq, double expire_time) : seq(seq), expire_time(expire_time) {}
@@ -51,6 +47,7 @@ unsigned int seq = 0;
 unsigned int current_ack = 1;
 #ifdef AIMD
 unsigned int window_size = 2;
+unsigned int ssthresh = 16;
 #else
 unsigned int window_size = 8;
 #endif
@@ -183,8 +180,9 @@ void Retransmit(unsigned int seq) {
 inline bool PacketNotCorrupted(packet *pkt) {
     constexpr static int header_size = 11;
     unsigned int size = pkt->data[0];
-    unsigned int ack = *(unsigned int *) &pkt->data[5];
-    if (size < 0 || size > RDT_PKTSIZE || ack > seq + 1)
+    unsigned int pkt_seq = *(unsigned int *) &pkt->data[1];
+    unsigned int pkt_ack = *(unsigned int *) &pkt->data[5];
+    if (size < 0 || size > RDT_PKTSIZE || pkt_ack > seq + 1 || pkt_seq > seq)
         return false;
     int pkt_checksum = *(unsigned short *) &pkt->data[9];
     /* Set the checksum to zero first, then calculate the checksum */
@@ -196,6 +194,22 @@ inline bool PacketNotCorrupted(packet *pkt) {
     return pkt_checksum == real_checksum;
 }
 
+void StopReceivedPacketTimer(unsigned int seq) {
+    auto iter = std::find_if(timer_chain.begin(), timer_chain.end(), [seq](const TimerChainBlock &another) {
+        return another.seq == seq;
+    });
+    if (iter == timer_chain.end()) return;
+    if (iter == timer_chain.begin()) {
+        Sender_StopTimer();
+        timer_chain.pop_front();
+        if (!timer_chain.empty()) {
+            Sender_StartTimer(timer_chain.front().expire_time - GetSimulationTime());
+        }
+    } else {
+        timer_chain.erase(iter);
+    }
+}
+
 /* event handler, called when a packet is passed from the lower layer at the 
    sender */
 void Sender_FromLowerLayer(struct packet *pkt) {
@@ -205,11 +219,14 @@ void Sender_FromLowerLayer(struct packet *pkt) {
 #endif
         return;
     }
-
+    unsigned int seq = *(unsigned int *) (&pkt->data[1]);
     unsigned int ack = *(unsigned int *) (&pkt->data[5]);
 #ifdef DEBUG
     printf("Received ack from receiver: %d, and dup_ack[%d] = %d\n", ack, ack, dup_ack[ack] + 1);
 #endif
+
+    StopReceivedPacketTimer(seq);
+
     /* Fast retransmit */
     if (++dup_ack[ack] >= DUP_UPPERBOUND) {
         dup_ack[ack] = 0;
@@ -230,7 +247,7 @@ void Sender_FromLowerLayer(struct packet *pkt) {
 #endif
     }
 #ifdef AIMD
-    if (window_size < WINDOW_SIZE_UPPERBOUND) {
+    if (window_size < ssthresh) {
         window_size <<= 1;
     } else {
         ++window_size;

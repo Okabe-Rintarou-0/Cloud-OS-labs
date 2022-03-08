@@ -157,7 +157,7 @@ void Receiver_FromLowerLayer(struct packet *pkt) {
     printf("Receiver send ack pkt to sender(ack = %d)\n", ack);
 #endif
     memset(&ack_pkt, 0, sizeof(packet));
-    *(unsigned int *) &ack_pkt.data[1] = 1;
+    *(unsigned int *) &ack_pkt.data[1] = seq;
     *(unsigned int *) &ack_pkt.data[5] = ack;
     *(unsigned short *) &ack_pkt.data[9] = checksum((unsigned short *) &ack_pkt, header_size);
     Receiver_ToLowerLayer(&ack_pkt);

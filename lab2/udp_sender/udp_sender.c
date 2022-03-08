@@ -190,7 +190,7 @@ lcore_main(struct rte_mempool *mbuf_pool) {
             if (retval != 0)
                 printf("mbufs alloc failed\n");
             fill_udp_pkt(port, bufs, i);
-            /* Send burst of TX packets, to second port of pair. */
+            /* Send burst of TX packets. */
             const uint16_t nb_tx = rte_eth_tx_burst(port, 0,
                                                     bufs, BURST_SIZE);
 

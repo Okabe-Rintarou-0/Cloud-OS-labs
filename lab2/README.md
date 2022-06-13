@@ -1,13 +1,5 @@
 # Lab 2 send and receive packets with DPDK
 
-## Personal Info
-
-| Key        | Value                 |
-| ---------- | --------------------- |
-| Name       | 林子宏                |
-| Student ID | 519021911327          |
-| Email      | 923048992@sjtu.edu.cn |
-
 ## Part1
 
 > Q1: What's the purpose of using hugepage?

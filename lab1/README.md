@@ -1,15 +1,5 @@
 # Lab 1 - Reliable Data Transport Protocol
 
-### Personal Info
-
-| Key        | Value                 |
-| ---------- | --------------------- |
-| Name       | 林子宏                |
-| Student ID | 519021911327          |
-| Email      | 923048992@sjtu.edu.cn |
-
-
-
 ### Packet Format
 
 The packet format of my reliable data transport protocol is as follow.
